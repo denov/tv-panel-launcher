@@ -466,6 +466,9 @@
          (github.com/denov/home-assistant-tv-panel) fills it from Home Assistant. Empty = off. A theme can set
          "widget_provider". -->
     <string name="widget_provider" translatable="false">com.fullstacksystems.tvpanel</string>
+    <!-- The widget row's app keeps its own tile on Home. Off: its chips are the way in (an unpaired TV Panel shows a
+         chip to pair, and Hold OK on any chip opens the app). A theme can set "widget_provider_tile". -->
+    <bool name="widget_provider_tile">false</bool>
 
     <!-- Time-of-day backdrop behind everything: a dark gradient that follows the clock, with a warm
          horizon glow around sunrise and sunset. 0 keeps the plain background (the default); 1 to 100

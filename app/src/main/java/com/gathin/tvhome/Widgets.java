@@ -29,6 +29,7 @@ import java.util.concurrent.RejectedExecutionException;
  * answers content://authority/widgets with the columns key, label, value, icon (PNG blob) and open (1 when OK should
  * open a page). A row with an empty value is drawn as its icon alone (the label is still its spoken name); one
  * with neither value nor icon is skipped. OK on an open chip starts {@value #ACTION} in that package with the chip's key as "key".
+ * Hold OK on any chip opens the app itself ({@link #app}), whose own tile stays off Home (widget_provider_tile).
  */
 final class Widgets {
     static final String META = "com.gathin.tvhome.widgets";
@@ -161,6 +162,14 @@ final class Widgets {
     }
 
     /** The page behind a chip, in the app that published it; null when it has none or the app is gone. */
+    /** Hold OK on any chip: the app itself (TV Panel's own page, with the pairing code), as its tile would open it. */
+    Intent app() {
+        PackageManager pm = ctx.getPackageManager();
+        Intent i = pm.getLeanbackLaunchIntentForPackage(pkg);
+        if (i == null) i = pm.getLaunchIntentForPackage(pkg);
+        return i == null ? null : i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    }
+
     Intent open(Chip chip) {
         if (!chip.open) return null;
         Intent i = new Intent(ACTION).setPackage(pkg).putExtra("key", chip.key).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

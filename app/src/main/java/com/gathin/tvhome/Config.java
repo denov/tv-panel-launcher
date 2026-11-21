@@ -154,6 +154,11 @@ final class Config {
     final boolean showStats;
     /** game_day: the package of an add-on that publishes each team's next game (GameDay); empty = off. */
     final String gameDay;
+    /** Adds the widget row's app to the hidden tiles, unless its tile is wanted (widget_provider_tile). */
+    static void hideWidgetProviderTile(List<String> hidden, String provider, boolean tileWanted) {
+        if (!tileWanted && !provider.isEmpty() && !hidden.contains(provider)) hidden.add(provider);
+    }
+
     /** widget_provider: the package that publishes the widget row under the clock (Widgets); empty = off. */
     String widgetProvider = "";
     /** ambient_glow_color: one colour for the glow whatever app is focused; empty = the focused app's colour. */
@@ -707,6 +712,14 @@ final class Config {
         Festival festival = json == null ? Festival.NONE : Festival.parse(festivalName(json),
                 string(json, "festival_until", ""), string(json, "greeting", ""), string(json, "accent_color", ""));
 
+        // The widget row's app (TV Panel) is reached through its chips, so its tile leaves Home: an unpaired TV Panel
+        // shows a chip to pair, and Hold OK on any chip opens the app. widget_provider_tile brings the tile back.
+        String widgetProvider = res.getString(R.string.widget_provider).trim();
+        if (json != null) widgetProvider = string(json, "widget_provider", widgetProvider).trim();
+        boolean providerTile = res.getBoolean(R.bool.widget_provider_tile);
+        if (json != null) providerTile = bool(json, "widget_provider_tile", providerTile);
+        hideWidgetProviderTile(hidden, widgetProvider, providerTile);
+
         Config made = new Config(dock, fillDock, hidden, libraryApps, libraryExcludedApps, liveTv, liveTvAction, liveTvInputId, packageMap(launchActions), packageMap(appLabels),
                 packageMap(appBanners), panelService, panelAction, panelExtra, coocaaSources, inputAction, inputSources, inputUriScheme, Math.max(1, columns),
                 Math.max(0, rowsBelow), animations, advancedEffects, shamsi, greetingName, moduleCards, reducedMotion, bootToLiveTv,
@@ -722,8 +735,6 @@ final class Config {
                 Math.max(0, Math.min(90, clockWallpaperDim)), clockGlow, glassStyle, singleRow && dockRow, dockBandAll, lunar, lunarOffset,
                 dateBelowClock, vpnPill, locale, powerOnHomeAlways, inputsConnectedOnly, inputsCecStateOnly,
                 Math.max(0, Math.min(600, openOnStartNetworkWait)), openOnStartOnWake, iconOnlyVpn, clockFormat, backOpensClock, glowSnap);
-        String widgetProvider = res.getString(R.string.widget_provider).trim();
-        if (json != null) widgetProvider = string(json, "widget_provider", widgetProvider).trim();
         made.widgetProvider = widgetProvider;
         made.ambientGlowColor = res.getString(R.string.ambient_glow_color).trim();
         made.backOpensScreensaver = res.getBoolean(R.bool.back_opens_screensaver);

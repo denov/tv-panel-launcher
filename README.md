@@ -15,7 +15,9 @@ repo is only the launcher: for debloating the TV first, use CleanYourTV itself.
 ## What's different from CleanYourTV's launcher
 
 - **The widget row:** chips under the clock, read from the app named by `widget_provider` (TV Panel by default). OK
-  on a chip opens it in that app. With TV Panel not installed, there's no row.
+  on a chip opens it in that app; Hold OK on any chip opens the app itself. That app's own tile stays off Home, since
+  its chips are the way in (an unpaired TV Panel shows a **Pair with Home Assistant** chip). `"widget_provider_tile":
+  true` in a theme brings the tile back. With TV Panel not installed, there's no row.
 - **`ambient_glow_color`:** one colour for the glow whatever app is focused, e.g. `"#228B22"`. Empty (the default)
   keeps the focused app's colour.
 - **`back_opens_screensaver`:** with `back_opens_clock`, Back on Home opens the TV's own screensaver (Ambient Mode,

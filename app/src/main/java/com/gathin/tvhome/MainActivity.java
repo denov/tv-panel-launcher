@@ -2543,6 +2543,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     }
                 });
             }
+            // Hold OK: the app itself, since its tile is off Home (an unpaired TV Panel's chip opens it with OK too).
+            v.setOnLongClickListener(x -> {
+                Intent app = widgets.app();
+                if (app == null) return false;
+                try {
+                    startActivity(app);
+                } catch (RuntimeException e) {
+                    return false;
+                }
+                return true;
+            });
             if (chip.key.equals(focusedKey)) refocus = v;
             widgetStrip.addView(v, lp);
         }
