@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
 # Build the launcher APK and install it on the TV as the default home screen.
 set -euo pipefail
+# CONFIG=<file.json>: the TV's own settings (any config.xml key a theme can set), written after the install.
+if [ -n "${CONFIG:-}" ]; then
+  [ -f "$CONFIG" ] || { echo "ERROR: no such config file: $CONFIG" >&2; exit 1; }
+  CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
+fi
 cd "$(dirname "$0")"
 : "${TV_HOST:?set TV_HOST to the TV IP address, e.g. TV_HOST=192.168.1.50 $0}"
-TOOLS="$(cd ../tools && (pwd -W 2>/dev/null || pwd))"   # absolute (Windows form on Git Bash, for Windows Python), so the venv's Python doesn't warn about "../" in its prefix
+TOOLS="$(cd tools && (pwd -W 2>/dev/null || pwd))"   # absolute (Windows form on Git Bash, for Windows Python), so the venv's Python doesn't warn about "../" in its prefix
 PY=$TOOLS/venv/bin/python
 [ -x "$PY" ] || PY=$TOOLS/venv/Scripts/python.exe
 # No venv yet: say how to make one (as tools/disable.sh does) instead of failing on the Windows path (#1142).
 [ -x "$PY" ] || { echo "run: python3 -m venv tools/venv && tools/venv/bin/pip install -r tools/requirements.txt" >&2; exit 1; }
 export MSYS_NO_PATHCONV=1
+# This launcher's app id: gradle.properties' launcherApplicationId, else app/build.gradle's default.
+PKG=$(sed -n 's/^launcherApplicationId=//p' gradle.properties 2>/dev/null | tr -d '\r' | tail -n 1)
+[ -n "$PKG" ] || PKG=$(sed -n "s/.*getOrElse('\([^']*\)').*/\1/p" app/build.gradle | head -n 1)
+[ -n "$PKG" ] || { echo "ERROR: could not read the app id from app/build.gradle" >&2; exit 1; }
+# The classes keep CleanYourTV's package (the namespace), whatever the app id: activities are $PKG/$NS.<Class>.
+NS=$(sed -n "s/^[[:space:]]*namespace[[:space:]]*'\([^']*\)'.*/\1/p" app/build.gradle | head -n 1)
+[ -n "$NS" ] || { echo "ERROR: could not read the namespace from app/build.gradle" >&2; exit 1; }
+if [ -n "${CONFIG:-}" ]; then
+  "$PY" -I -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$CONFIG" \
+    || { echo "ERROR: $CONFIG is not valid JSON; nothing was built or installed." >&2; exit 1; }
+fi
 # Below minSdk, `pm install` refuses the APK with INSTALL_FAILED_OLDER_SDK - and only after gradle has
 # spent a minute building and b64push has pushed the APK to the TV (#576). Ask the TV first. The
 # number comes from the build file, so it follows the launcher instead of a hard-coded copy here.
@@ -17,11 +33,10 @@ TV_SDK=$("$PY" -I "$TOOLS/tv.py" 'getprop ro.build.version.sdk' 2>/dev/null | tr
 if [ -n "$MIN_SDK" ] && [ -n "$TV_SDK" ] && [ "$TV_SDK" -lt "$MIN_SDK" ]; then
   echo "ERROR: this TV runs SDK $TV_SDK and the launcher is built with minSdk $MIN_SDK (app/build.gradle)," >&2
   echo "so pm install would answer INSTALL_FAILED_OLDER_SDK. Nothing was built, pushed or disabled." >&2
-  echo "The debloat half of the repo still applies to that set, from its own home screen; the launcher" >&2
-  echo "half would need your own build with a lower minSdk (docs/TROUBLESHOOTING.md)." >&2
+  echo "It would need your own build with a lower minSdk (CleanYourTV's docs/TROUBLESHOOTING.md)." >&2
   exit 1
 fi
-# SKIP_BUILD=1 installs the APK already built (tools/docker-build.sh builds it in Docker, with no JDK here).
+# SKIP_BUILD=1 installs the APK already built (./gradlew assembleRelease, or CleanYourTV's tools/docker-build.sh).
 if [ "${SKIP_BUILD:-}" != 1 ]; then
 # macOS: java_home or Homebrew; Linux: the java on PATH.
 # `/usr/libexec/java_home -v 17` means "17 or newer", so on a Mac whose only JDK is newer it prints
@@ -57,7 +72,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 [ -f local.properties ] || echo "sdk.dir=$(printf '%s' "$ANDROID_HOME" | tr '\\' '/')" > local.properties
 ./gradlew assembleRelease -q --console=plain
 elif [ ! -f app/build/outputs/apk/release/app-release.apk ]; then
-  echo "ERROR: SKIP_BUILD=1 but there is no app/build/outputs/apk/release/app-release.apk; build it first (tools/docker-build.sh)." >&2
+  echo "ERROR: SKIP_BUILD=1 but there is no app/build/outputs/apk/release/app-release.apk; build it first (./gradlew assembleRelease)." >&2
   exit 1
 fi
 # Which app owns Home differs by build (com.google.android.tvlauncher on Android TV,
@@ -68,22 +83,23 @@ fi
 # ColorOS TV's com.heytap.tv.launcher stays out of the list below: recognising it would disable
 # the stock home, and the default applicationId is refused as Home on that firmware.
 # docs/devices/oppo-k9-55-oppocnm632.md.
-KNOWN_STOCK_LAUNCHERS="com.google.android.tvlauncher com.google.android.apps.tv.launcherx com.google.android.leanbacklauncher com.mitv.tvhome"
+# CleanYourTV's own launcher (com.gathin.tvhome) is replaced the same way: disabled, never uninstalled.
+KNOWN_STOCK_LAUNCHERS="com.google.android.tvlauncher com.google.android.apps.tv.launcherx com.google.android.leanbacklauncher com.mitv.tvhome com.gathin.tvhome"
 if [ -z "${STOCK_LAUNCHER:-}" ]; then
-  HOME_PKG=$("$PY" -I ../tools/tv.py 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME' \
+  HOME_PKG=$("$PY" -I tools/tv.py 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME' \
     | tail -n 1 | tr -d '\r' | cut -d/ -f1) || {
     echo "ERROR: could not ask the TV which launcher owns Home. Check TV_HOST and the debugging prompt on the TV," >&2
     echo "or pass STOCK_LAUNCHER=<package> yourself." >&2; exit 1; }
   case " $KNOWN_STOCK_LAUNCHERS " in
     *" $HOME_PKG "*) STOCK_LAUNCHER=$HOME_PKG ;;
     *)
-      if [ "$HOME_PKG" = com.gathin.tvhome ]; then
+      if [ "$HOME_PKG" = "$PKG" ]; then
         STOCK_LAUNCHER=none; echo "Home already belongs to this launcher; nothing will be disabled."
       elif [ "$HOME_PKG" = android ]; then
         # Android's chooser: two or more launchers tie and no default is set, which is where a TV lands
         # after tools/restore.sh followed by a re-applied list. Take the one known stock launcher among
         # the HOME claimants, if there is exactly one.
-        CLAIMANTS=$("$PY" -I ../tools/tv.py 'cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME' \
+        CLAIMANTS=$("$PY" -I tools/tv.py 'cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.HOME' \
           | tr -d '\r' | grep -o '[A-Za-z0-9_.]*/' | tr -d / | sort -u)
         FOUND=""; N=0
         for k in $KNOWN_STOCK_LAUNCHERS; do
@@ -98,7 +114,7 @@ if [ -z "${STOCK_LAUNCHER:-}" ]; then
       else
         echo "ERROR: Home currently resolves to '${HOME_PKG:-nothing}', which is not a stock launcher this script knows." >&2
         echo "  android                                  = Android's launcher chooser (two launchers tie); pick a default on the TV first" >&2
-        echo "  com.google.android.tungsten.setupwraith  = Google TV's setup wizard; see README, Troubleshooting" >&2
+        echo "  com.google.android.tungsten.setupwraith  = Google TV's setup wizard; see CleanYourTV's README, Troubleshooting" >&2
         echo "  anything else                            = another launcher is the default" >&2
         echo "Run again with STOCK_LAUNCHER=<package to disable> or STOCK_LAUNCHER=none." >&2; exit 1
       fi ;;
@@ -109,10 +125,10 @@ HOME_QUERY='cmd package resolve-activity --brief -a android.intent.action.MAIN -
 if [ "$STOCK_LAUNCHER" = none ]; then DISABLE_STOCK="echo stock launcher left alone"
 else DISABLE_STOCK="pm disable-user --user 0 $STOCK_LAUNCHER"; fi
 APK=app/build/outputs/apk/release/app-release.apk
-"$PY" -I ../tools/b64push.py "$APK" /data/local/tmp/tvhome.apk
+"$PY" -I tools/b64push.py "$APK" /data/local/tmp/tvhome.apk
 # Install on its own: in the batch below a failed install (e.g. "not enough space" on a full /data)
 # would not stop the stock launcher from being disabled.
-OUT=$("$PY" -I ../tools/tv.py 'pm install -r /data/local/tmp/tvhome.apk; rm -f /data/local/tmp/tvhome.apk')
+OUT=$("$PY" -I tools/tv.py 'pm install -r /data/local/tmp/tvhome.apk; rm -f /data/local/tmp/tvhome.apk')
 echo "$OUT"
 case "$OUT" in
   *Success*) ;;
@@ -120,7 +136,7 @@ case "$OUT" in
     # The pre-flight above missed it (a TV whose getprop did not answer, or an APK built elsewhere):
     # name the real cause instead of leaving the raw Failure line to be read as an ADB problem.
     echo "ERROR: pm install refused the APK as too new for this set (INSTALL_FAILED_OLDER_SDK): the TV runs an older SDK than the launcher's minSdk ${MIN_SDK:-in app/build.gradle}." >&2
-    echo "The stock launcher was left untouched. Read both numbers and see docs/TROUBLESHOOTING.md." >&2
+    echo "The stock launcher was left untouched. Read both numbers and see CleanYourTV's docs/TROUBLESHOOTING.md." >&2
     exit 1 ;;
   *) echo "ERROR: pm install failed; the stock launcher was left untouched." >&2; exit 1 ;;
 esac
@@ -129,7 +145,7 @@ esac
 # HDMI picture on screen (#1101). `am start` below would only reuse it, so stop it first; the start
 # then creates a fresh one. A force stop also takes the key helpers off the enabled list, so a helper
 # that was on is written back (cleared first: Android binds again only when the list changes).
-"$PY" -I ../tools/tv.py 's=$(settings get secure enabled_accessibility_services); a=$(settings get secure accessibility_enabled); am force-stop com.gathin.tvhome; case "$s" in *com.gathin.tvhome*) settings put secure enabled_accessibility_services ""; settings put secure enabled_accessibility_services "$s"; settings put secure accessibility_enabled "$a" ;; esac' >/dev/null
+"$PY" -I tools/tv.py 's=$(settings get secure enabled_accessibility_services); a=$(settings get secure accessibility_enabled); am force-stop '"$PKG"'; case "$s" in *'"$PKG"'*) settings put secure enabled_accessibility_services ""; settings put secure enabled_accessibility_services "$s"; settings put secure accessibility_enabled "$a" ;; esac' >/dev/null
 # Start the launcher on its own, before the stock Home is touched. In the batch below a start that
 # fails only prints an "Error:" line, and the stock launcher would be disabled anyway, leaving the TV
 # with no usable Home (#239). "Status: ok" from `am start -W` means the activity really came up;
@@ -138,11 +154,19 @@ esac
 # make this launcher the home process until a restart, and Android then blocks the stock launcher's
 # remote-button launches (BAL_BLOCK, #1274). The component alone still proves the activity comes up.
 if [ "$STOCK_LAUNCHER" = none ]; then
-  START_CMD='am start -W -n com.gathin.tvhome/.MainActivity'
+  START_CMD="am start -W -n $PKG/$NS.MainActivity"
 else
-  START_CMD='am start -W -a android.intent.action.MAIN -c android.intent.category.HOME -n com.gathin.tvhome/.MainActivity'
+  START_CMD="am start -W -a android.intent.action.MAIN -c android.intent.category.HOME -n $PKG/$NS.MainActivity"
 fi
-START_OUT=$("$PY" -I ../tools/tv.py "$START_CMD")
+if [ -n "${CONFIG:-}" ]; then
+  "$PY" -I tools/tv.py --push "$CONFIG" /data/local/tmp/tvhome-config.json >/dev/null
+  OUT=$("$PY" -I tools/tv.py "content write --uri content://$PKG.theme/config.json < /data/local/tmp/tvhome-config.json && echo config-written; rm -f /data/local/tmp/tvhome-config.json")
+  case "$OUT" in
+    *config-written*) echo "Settings written from $CONFIG" ;;
+    *) echo "ERROR: the settings could not be written (see above); $STOCK_LAUNCHER was left enabled." >&2; echo "$OUT" >&2; exit 1 ;;
+  esac
+fi
+START_OUT=$("$PY" -I tools/tv.py "$START_CMD")
 echo "$START_OUT"
 # Both halves matter: some builds answer "Status: ok" for a task that was merely brought to the
 # front, and an activity that cannot start still prints "Error: Activity not started".
@@ -151,16 +175,16 @@ if ! printf '%s' "$START_OUT" | grep -qF 'Status: ok' || printf '%s' "$START_OUT
   exit 1
 fi
 printf '%s\n' \
-  "pm grant com.gathin.tvhome android.permission.ACCESS_FINE_LOCATION 2>/dev/null; echo location-granted" \
-  "cmd package compile -m speed -f com.gathin.tvhome" \
+  "pm grant $PKG android.permission.ACCESS_FINE_LOCATION 2>/dev/null; echo location-granted" \
+  "cmd package compile -m speed -f $PKG" \
   "$DISABLE_STOCK" \
-  "cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity" \
-  | "$PY" -I ../tools/tv.py --batch
+  "cmd package set-home-activity --user 0 $PKG/$NS.MainActivity" \
+  | "$PY" -I tools/tv.py --batch
 
 # Home's owner, or an empty string when the TV cannot be reached (pipefail would otherwise make a
 # lost connection abort the script with no explanation).
 query_home() {
-  "$PY" -I ../tools/tv.py "$HOME_QUERY" 2>/dev/null | tail -n 1 | tr -d '\r' || true
+  "$PY" -I tools/tv.py "$HOME_QUERY" 2>/dev/null | tail -n 1 | tr -d '\r' || true
 }
 
 # Put the stock launcher back and check that it took. A TV whose new Home does not start can only be
@@ -171,16 +195,16 @@ rollback_home() {
     echo "ERROR: Home is not the new launcher, and no stock launcher was disabled; nothing to roll back." >&2
     return 1
   fi
-  "$PY" -I ../tools/tv.py "pm enable --user 0 $STOCK_LAUNCHER" >/dev/null 2>&1 || true
+  "$PY" -I tools/tv.py "pm enable --user 0 $STOCK_LAUNCHER" >/dev/null 2>&1 || true
   # set-home-activity needs pkg/activity on Android 9, so resolve the component on the TV first.
-  "$PY" -I ../tools/tv.py "cmd package set-home-activity --user 0 \$(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME $STOCK_LAUNCHER | tail -n 1)" >/dev/null 2>&1 || true
+  "$PY" -I tools/tv.py "cmd package set-home-activity --user 0 \$(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME $STOCK_LAUNCHER | tail -n 1)" >/dev/null 2>&1 || true
   BACK=$(query_home)
   case "$BACK" in
     "$STOCK_LAUNCHER"/*) echo "$STOCK_LAUNCHER owns Home again." >&2; return 0 ;;
   esac
-  REC="${HOME:-$PWD}/cleanyourtv-handover-$(printf '%s' "$TV_HOST" | tr -c 'A-Za-z0-9._-' '_').txt"
+  REC="${HOME:-$PWD}/tv-panel-launcher-handover-$(printf '%s' "$TV_HOST" | tr -c 'A-Za-z0-9._-' '_').txt"
   {
-    echo "# cleanyourtv: the launcher handover on $TV_HOST did not finish. From the repo root:"
+    echo "# tv-panel-launcher: the launcher handover on $TV_HOST did not finish. From the repo root:"
     echo "TV_HOST=$TV_HOST tools/tv.py 'pm enable --user 0 $STOCK_LAUNCHER'"
     echo "TV_HOST=$TV_HOST tools/tv.py 'cmd package set-home-activity --user 0 \$(cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME $STOCK_LAUNCHER | tail -n 1)'"
     echo "# then check: TV_HOST=$TV_HOST tools/tv.py '$HOME_QUERY'"
@@ -198,7 +222,7 @@ rollback_home() {
 # stock launcher back if it is not ours.
 HOME_NOW=$(query_home)
 case "$HOME_NOW" in
-  com.gathin.tvhome/*) echo "Home now resolves to $HOME_NOW" ;;
+  "$PKG"/*) echo "Home now resolves to $HOME_NOW" ;;
   *)
     if [ -z "$HOME_NOW" ]; then
       echo "ERROR: the TV stopped answering while Home was being switched, so the outcome is unknown." >&2
@@ -208,7 +232,7 @@ case "$HOME_NOW" in
     rollback_home || true
     if [ -n "$HOME_NOW" ]; then
       echo "On Google TV this usually means com.google.android.tungsten.setupwraith also claims Home: add it to" >&2
-      echo "your debloat list (see README, Troubleshooting), apply the list, then run this script again." >&2
+      echo "your CleanYourTV debloat list (see its README, Troubleshooting), apply the list, then run this script again." >&2
     fi
     exit 1 ;;
 esac
@@ -230,8 +254,8 @@ esac
 # already listed was refused while the APK was replaced, and binds again only once the list changes, so clear it,
 # switch accessibility off and write it back (as tools/theme.sh does).
 enable_service() {   # appends to enabled_accessibility_services without dropping other services
-  svc=com.gathin.tvhome/.$1
-  "$PY" -I ../tools/tv.py "cmd appops set com.gathin.tvhome AUTO_START allow 2>/dev/null; cmd appops set com.gathin.tvhome APP_AUTO_START allow 2>/dev/null; appops write-settings 2>/dev/null; s=\$(settings get secure enabled_accessibility_services); case \"\$s\" in *$1*) settings put secure enabled_accessibility_services ''; settings put secure accessibility_enabled 0; sleep 1; settings put secure enabled_accessibility_services \"\$s\" ;; null|'') settings put secure enabled_accessibility_services $svc ;; *) settings put secure enabled_accessibility_services \"\$s:$svc\" ;; esac; settings put secure accessibility_enabled 1; echo $1 enabled"
+  svc=$PKG/$NS.$1
+  "$PY" -I tools/tv.py "cmd appops set $PKG AUTO_START allow 2>/dev/null; cmd appops set $PKG APP_AUTO_START allow 2>/dev/null; appops write-settings 2>/dev/null; s=\$(settings get secure enabled_accessibility_services); case \"\$s\" in *$1*) settings put secure enabled_accessibility_services ''; settings put secure accessibility_enabled 0; sleep 1; settings put secure enabled_accessibility_services \"\$s\" ;; null|'') settings put secure enabled_accessibility_services $svc ;; *) settings put secure enabled_accessibility_services \"\$s:$svc\" ;; esac; settings put secure accessibility_enabled 1; echo $1 enabled"
 }
 if [ "${INPUT_KEY_SERVICE:-0}" = 1 ]; then enable_service InputKeyService; fi
 if [ "${HOME_KEY_SERVICE:-0}" = 1 ]; then enable_service HomeKeyService; fi
@@ -244,17 +268,17 @@ if [ "${HOME_KEY_SERVICE:-0}" = 1 ]; then enable_service HomeKeyService; fi
 # not list the permission at all, fails, or ran out of time (it says DUMP TIMEOUT and still exits 0, cut off
 # before the granted line) prints nothing.
 SECURE=android.permission.WRITE_SECURE_SETTINGS
-READ="s=\$(dumpsys package com.gathin.tvhome) && case \"\$s\" in *\"DUMP TIMEOUT\"*) ;; *\"$SECURE: granted=true\"*)"
+READ="s=\$(dumpsys package $PKG) && case \"\$s\" in *\"DUMP TIMEOUT\"*) ;; *\"$SECURE: granted=true\"*)"
 if [ "${RESTORE_KEY_SERVICES:-0}" = 1 ]; then
-  STEP="pm grant com.gathin.tvhome $SECURE && $READ echo restore-granted ;; esac"; MARK=restore-granted
+  STEP="pm grant $PKG $SECURE && $READ echo restore-granted ;; esac"; MARK=restore-granted
   HINT="the launcher does not hold it, so restore_key_services cannot put the helpers back"
 else
-  STEP="pm revoke com.gathin.tvhome $SECURE; $READ ;; *\"$SECURE\"*) echo secure-settings-revoked ;; esac"
+  STEP="pm revoke $PKG $SECURE; $READ ;; *\"$SECURE\"*) echo secure-settings-revoked ;; esac"
   MARK=secure-settings-revoked
   HINT="the launcher may still hold it; run again with RESTORE_KEY_SERVICES=1 to keep it on purpose"
 fi
 # A tv.py that cannot reach the TV fails here too, and gets the same message instead of stopping the script bare.
-OUT=$("$PY" -I ../tools/tv.py "$STEP") || OUT=""
+OUT=$("$PY" -I tools/tv.py "$STEP") || OUT=""
 echo "$OUT"
 # Only a line that is the marker and nothing else counts: the step's own text contains it too.
 ACK_FOUND=0
@@ -263,7 +287,7 @@ while IFS= read -r line; do
 done <<< "$OUT"
 if [ "$ACK_FOUND" != 1 ]; then
   echo "ERROR: WRITE_SECURE_SETTINGS is not in the state this install asked for ($MARK missing): $HINT." >&2
-  echo "The launcher is installed and is Home. Check by hand: tools/tv.py 'dumpsys package com.gathin.tvhome' | grep $SECURE" >&2
+  echo "The launcher is installed and is Home. Check by hand: tools/tv.py 'dumpsys package $PKG' | grep $SECURE" >&2
   exit 1
 fi
 echo "Installed. Press Home on the remote to see it."

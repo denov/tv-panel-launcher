@@ -126,6 +126,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private long idleClockMs;
     /** Back on Home opens ClockActivity (config.xml, back_opens_clock). */
     private boolean backOpensClock;
+    /** With backOpensClock, the TV's own screensaver instead, where it has one (back_opens_screensaver). */
+    private boolean backOpensScreensaver;
     private final Runnable showIdleClock = () -> startActivity(new Intent(this, ClockActivity.class));
     private String liveTvAction;
     private String liveTvInputId;
@@ -178,7 +180,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private ValueAnimator ambientAnimator;
     /** config.xml glow_snap: the glow takes a new colour in one frame instead of the dip-and-fade. */
     private boolean glowSnap;
-    /** One colour for the ambient glow whatever app is focused (config.xml ambient_glow_color); 0 follows the app. */
+    /** One colour for the ambient glow whatever app is focused (ambient_glow_color); 0 follows the app. */
     private int fixedGlow;
 
     private int glowColorAt(int position) {
@@ -208,7 +210,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView raceKicker, raceHeadline, raceSessions;
     /** game_day: each team's next game from an add-on, rotating in the race panel; null when the key is off. */
     private GameDay gameDay;
-    /** Local: widget_provider's chips under the clock; null when the key is off or the app is missing. */
+    /** widget_provider's chips under the clock; null when the key is off or the app is missing. */
     private Widgets widgets;
     private LinearLayout widgetStrip;
     private View raceBar;
@@ -493,6 +495,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         liveTvPkg = cfg.liveTvPackage;
         idleClockMs = cfg.homeIdleClockMinutes * MINUTE_MS;
         backOpensClock = cfg.backOpensClock;
+        backOpensScreensaver = cfg.backOpensScreensaver;
         bootToLiveTv = cfg.bootToLiveTv;
         openOnStartChoice = cfg.openOnStartChoice;
         openOnStartWaitMs = cfg.openOnStartNetworkWait * 1000L;
@@ -527,12 +530,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ambient.forceHasOverlappingRendering(false);
         ambientGlow = cfg.ambientGlow;
         glowSnap = cfg.glowSnap;
-        String fixed = getString(R.string.ambient_glow_color).trim();
-        try {
-            fixedGlow = fixed.isEmpty() ? 0 : android.graphics.Color.parseColor(fixed);
-        } catch (IllegalArgumentException e) {
-            fixedGlow = 0;
-        }
+        fixedGlow = Config.glowColor(cfg.ambientGlowColor);
         appGlow = cfg.appGlow;
         if (!ambientGlow) ambient.setVisibility(View.GONE);
         heroName = findViewById(R.id.heroName);
@@ -1777,9 +1775,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
         // Home screen: Back goes nowhere, unless back_opens_clock is on.
-        // Local change (Sony VH2): start the TV's own screensaver (Ambient Mode / photos) through SystemUI's
-        // "start now" shortcut, as the app_keys "screensaver" action does; the launcher's clock where it is missing.
-        if (backOpensClock) {
+        // back_opens_screensaver: the TV's own screensaver (Ambient Mode, photos) through SystemUI's "start now"
+        // shortcut, as the app_keys "screensaver" action does; the launcher's clock where it is missing.
+        if (backOpensClock && !backOpensScreensaver) startActivity(new Intent(this, ClockActivity.class));
+        else if (backOpensClock) {
             Intent dream = new Intent(Intent.ACTION_MAIN)
                     .setClassName("com.android.systemui", "com.android.systemui.Somnambulator");
             if (getPackageManager().resolveActivity(dream, 0) == null) dream = new Intent(this, ClockActivity.class);
@@ -2445,7 +2444,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 : res.getString(R.string.storage_gb_decimal, gb);
     }
 
-    // ---- local: widget row under the clock (widget_provider) --------------------------------------
+    // ---- widget row under the clock (widget_provider) ---------------------------------------------
 
     /**
      * Redraws the chips from the last read, keeping focus on the same chip (by key). The row is one line under the

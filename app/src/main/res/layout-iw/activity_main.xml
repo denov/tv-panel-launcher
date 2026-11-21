@@ -336,6 +336,19 @@
                 android:focusable="false"
                 android:visibility="gone" />
 
+            <!-- The widget row (Widgets.java, widget_provider). Filled in code; gone while there are no chips. -->
+            <LinearLayout
+                android:id="@+id/widgetStrip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_below="@id/leftBlock"
+                android:layout_alignStart="@id/leftBlock"
+                android:layout_marginTop="18dp"
+                android:orientation="horizontal"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/topButtons"
                 android:layout_width="wrap_content"

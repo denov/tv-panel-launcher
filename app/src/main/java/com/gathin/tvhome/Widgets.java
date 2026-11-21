@@ -22,7 +22,7 @@ import java.util.concurrent.RejectedExecutionException;
 
 /**
  * widget_provider (config.xml or a theme): a row of chips under the clock (icon, small label, value), published by
- * an app such as TV Panel. Local change, modelled on GameDay: the launcher only reads the app's provider and stays
+ * an app such as TV Panel. Modelled on GameDay: the launcher only reads the app's provider and stays
  * offline; the app does the fetching. Read while Home is on screen, every {@link #TICK_MS} and on each change.
  *
  * Contract: the named package declares {@value #META} (its provider authority) on its application; the provider

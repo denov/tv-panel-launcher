@@ -525,6 +525,9 @@
          home_idle_clock_minutes). Back keeps working as usual inside apps and Settings; only Home's own Back
          press changes. Off by default (Back does nothing on Home); a theme can set "back_opens_clock": true. -->
     <bool name="back_opens_clock">false</bool>
+    <!-- With back_opens_clock: Back opens the TV's own screensaver (Ambient Mode, photos) instead, where the TV has
+         one, and the clock otherwise. A theme can set "back_opens_screensaver": true. -->
+    <bool name="back_opens_screensaver">false</bool>
     <!-- The clock screensaver (Home idle clock and the system screensaver) over Home's wallpaper instead of black with
          a coloured glow. The clock still moves every minute. Can also be set with "clock_wallpaper" in a theme. -->
     <bool name="clock_wallpaper">false</bool>

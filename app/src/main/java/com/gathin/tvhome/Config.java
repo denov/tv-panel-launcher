@@ -154,8 +154,12 @@ final class Config {
     final boolean showStats;
     /** game_day: the package of an add-on that publishes each team's next game (GameDay); empty = off. */
     final String gameDay;
-    /** widget_provider (local): the package that publishes the widget row under the clock (Widgets); empty = off. */
+    /** widget_provider: the package that publishes the widget row under the clock (Widgets); empty = off. */
     String widgetProvider = "";
+    /** ambient_glow_color: one colour for the glow whatever app is focused; empty = the focused app's colour. */
+    String ambientGlowColor = "";
+    /** back_opens_screensaver: with back_opens_clock, Back opens the TV's own screensaver where it has one. */
+    boolean backOpensScreensaver;
     /** App library pill after the last Home row (config.xml app_library). */
     final boolean appLibrary;
     /** OK directly toggles Home membership in the library (app_library_selection). */
@@ -721,7 +725,21 @@ final class Config {
         String widgetProvider = res.getString(R.string.widget_provider).trim();
         if (json != null) widgetProvider = string(json, "widget_provider", widgetProvider).trim();
         made.widgetProvider = widgetProvider;
+        made.ambientGlowColor = res.getString(R.string.ambient_glow_color).trim();
+        made.backOpensScreensaver = res.getBoolean(R.bool.back_opens_screensaver);
+        if (json != null) {
+            made.ambientGlowColor = string(json, "ambient_glow_color", made.ambientGlowColor).trim();
+            made.backOpensScreensaver = bool(json, "back_opens_screensaver", made.backOpensScreensaver);
+        }
         return made;
+    }
+
+    /** ambient_glow_color: "#RRGGBB" or "#AARRGGBB" as a colour; 0 (follow the focused app) for anything else. */
+    static int glowColor(String value) {
+        String v = value == null ? "" : value.trim();
+        if (!v.matches("#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})")) return 0;
+        long c = Long.parseLong(v.substring(1), 16);
+        return (int) (v.length() == 7 ? 0xFF000000L | c : c);
     }
 
     /**
