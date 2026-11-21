@@ -462,6 +462,10 @@
          Empty = off: nothing is read or watched. The launcher only reads what the add-on publishes and never goes
          online. A theme can set "game_day". -->
     <string name="game_day" translatable="false"></string>
+    <!-- The widget row under the clock (Widgets.java): chips published by an app's provider. TV Panel
+         (github.com/denov/home-assistant-tv-panel) fills it from Home Assistant. Empty = off. A theme can set
+         "widget_provider". -->
+    <string name="widget_provider" translatable="false">com.fullstacksystems.tvpanel</string>
 
     <!-- Time-of-day backdrop behind everything: a dark gradient that follows the clock, with a warm
          horizon glow around sunrise and sunset. 0 keeps the plain background (the default); 1 to 100
@@ -497,6 +501,9 @@
          only background_color or the wallpaper behind everything. Can also be set with "ambient_glow": false in a
          theme's config.json. -->
     <bool name="ambient_glow">true</bool>
+    <!-- One colour for that glow, whatever app is focused, e.g. "#228B22" (forest green). Empty (the default): the
+         focused app's colour. A theme can set "ambient_glow_color". -->
+    <string name="ambient_glow_color" translatable="false"></string>
     <!-- true: when the focus moves to an app of another colour, the ambient glow takes the new colour in one frame
          instead of dimming and fading back in. Each frame of that fade repaints the whole screen, about 40 per key
          press, which a slow GPU such as the Mali-G52 cannot keep up with. Can also be set with "glow_snap" in a

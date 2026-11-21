@@ -25,6 +25,7 @@ import android.graphics.Paint;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
 import android.graphics.Shader;
+import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
@@ -177,6 +178,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private ValueAnimator ambientAnimator;
     /** config.xml glow_snap: the glow takes a new colour in one frame instead of the dip-and-fade. */
     private boolean glowSnap;
+    /** One colour for the ambient glow whatever app is focused (config.xml ambient_glow_color); 0 follows the app. */
+    private int fixedGlow;
+
+    private int glowColorAt(int position) {
+        return fixedGlow != 0 ? fixedGlow : adapter.ambientColorAt(position);
+    }
     private boolean heroShown;
     private boolean animations;
     private boolean advancedEffects;
@@ -201,6 +208,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView raceKicker, raceHeadline, raceSessions;
     /** game_day: each team's next game from an add-on, rotating in the race panel; null when the key is off. */
     private GameDay gameDay;
+    /** Local: widget_provider's chips under the clock; null when the key is off or the app is missing. */
+    private Widgets widgets;
+    private LinearLayout widgetStrip;
     private View raceBar;
     private LinearLayout racePager;
     private long rotationStart;
@@ -517,6 +527,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         ambient.forceHasOverlappingRendering(false);
         ambientGlow = cfg.ambientGlow;
         glowSnap = cfg.glowSnap;
+        String fixed = getString(R.string.ambient_glow_color).trim();
+        try {
+            fixedGlow = fixed.isEmpty() ? 0 : android.graphics.Color.parseColor(fixed);
+        } catch (IllegalArgumentException e) {
+            fixedGlow = 0;
+        }
         appGlow = cfg.appGlow;
         if (!ambientGlow) ambient.setVisibility(View.GONE);
         heroName = findViewById(R.id.heroName);
@@ -578,6 +594,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         raceBar = findViewById(R.id.raceBar);
         racePager = findViewById(R.id.racePager);
         gameDay = GameDay.create(this, cfg.gameDay, handler, this::updatePanel);
+        widgetStrip = findViewById(R.id.widgetStrip);
+        if (widgetStrip != null) widgets = Widgets.create(this, cfg.widgetProvider, handler, this::updateWidgets);
         // The rotation runs on the clock that never jumps: setting the TV's time must not stall or stretch a turn.
         rotationStart = SystemClock.elapsedRealtime();
         showStats = cfg.showStats;
@@ -1052,6 +1070,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (openInputsIfAsked(intent)) return;
         if (intent == null || !intent.hasCategory(Intent.CATEGORY_HOME)) return;
         if (gameDay != null && !stopped) gameDay.read();
+        if (widgets != null && !stopped) widgets.read();
         grid.scrollToPosition(0);
         lastFocused = 0;
         lastFocusedKey = adapter.getItemCount() > 0 ? adapter.keyAt(0) : null;
@@ -1130,6 +1149,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         if (showStats) startStats();
         if (gameDay != null) gameDay.start();
+        if (widgets != null) widgets.start();
         sky.update();
         wallpaperPlayer.start();
         handler.postDelayed(minuteTick, MINUTE_MS);
@@ -1315,6 +1335,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         startPending = null;   // leaving Home before the network came back: the boot's app stays closed
         stopStats();
         if (gameDay != null) gameDay.stop();
+        if (widgets != null) widgets.stop();
         handler.removeCallbacks(turnTick);
         if (lamp != null) lamp.stop();
         cancelPendingFocusScroll();
@@ -1375,6 +1396,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         RemoteKeys.release(this);
         cancelHoldOk();
         if (gameDay != null) gameDay.shutdown();
+        if (widgets != null) widgets.shutdown();
         unregisterReceiver(packageReceiver);
         if (openOnStartOnWake) unregisterReceiver(wakeReceiver);
         wallpaperPlayer.close();
@@ -1755,7 +1777,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
         // Home screen: Back goes nowhere, unless back_opens_clock is on.
-        if (backOpensClock) startActivity(new Intent(this, ClockActivity.class));
+        // Local change (Sony VH2): start the TV's own screensaver (Ambient Mode / photos) through SystemUI's
+        // "start now" shortcut, as the app_keys "screensaver" action does; the launcher's clock where it is missing.
+        if (backOpensClock) {
+            Intent dream = new Intent(Intent.ACTION_MAIN)
+                    .setClassName("com.android.systemui", "com.android.systemui.Somnambulator");
+            if (getPackageManager().resolveActivity(dream, 0) == null) dream = new Intent(this, ClockActivity.class);
+            try { startActivity(dream); } catch (RuntimeException e) { startActivity(new Intent(this, ClockActivity.class)); }
+        }
     }
 
     // ---- glass highlight -------------------------------------------------------------------------
@@ -1903,7 +1932,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     private void showHero(int position, float dockTopInRoot) {
         String label = adapter.labelAt(position);
-        int color = adapter.ambientColorAt(position);
+        int color = glowColorAt(position);
         float y = dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
         boolean changed = !label.contentEquals(heroName.getText());
         if (cinematic && heroArtAlpha > 0f) showHeroArt(position);
@@ -2182,7 +2211,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * name above the dock does not show (every grid tile has its name underneath).
      */
     private void showGlowOnly(int position) {
-        int color = adapter.ambientColorAt(position);
+        int color = glowColorAt(position);
         stopAmbientAnimation();
         hero.animate().cancel();
         ambient.animate().cancel();
@@ -2414,6 +2443,123 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         double gb = bytes / (1024.0 * 1024 * 1024);
         return gb >= 10 ? res.getString(R.string.storage_gb_whole, gb)
                 : res.getString(R.string.storage_gb_decimal, gb);
+    }
+
+    // ---- local: widget row under the clock (widget_provider) --------------------------------------
+
+    /**
+     * Redraws the chips from the last read, keeping focus on the same chip (by key). The row is one line under the
+     * clock: when the chips are wider than the screen they are drawn again smaller, down to 60 %.
+     */
+    private void updateWidgets() {
+        if (widgets == null || widgetStrip == null) return;
+        List<Widgets.Chip> chips = widgets.chips();
+        View focused = widgetStrip.findFocus();
+        String focusedKey = focused != null && focused.getTag() instanceof String ? (String) focused.getTag() : null;
+        widgetStrip.setVisibility(chips.isEmpty() ? View.GONE : View.VISIBLE);
+        View parent = (View) widgetStrip.getParent();
+        int avail = parent.getWidth() > 0 ? parent.getWidth() - parent.getPaddingLeft() - parent.getPaddingRight()
+                : getResources().getDisplayMetrics().widthPixels - Math.round(112 * density);
+        float scale = 1f;
+        View refocus = buildWidgets(chips, scale, focusedKey);
+        for (int pass = 0; pass < 3 && !chips.isEmpty(); pass++) {
+            widgetStrip.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+            int need = widgetStrip.getMeasuredWidth();
+            if (need <= avail || scale <= 0.6f) break;
+            scale = Math.max(0.6f, scale * avail / need * 0.98f);
+            refocus = buildWidgets(chips, scale, focusedKey);
+        }
+        if (refocus != null) refocus.requestFocus();
+        else if (focused != null) focusTile(Math.max(0, Math.min(lastFocused, adapter.appCount() - 1)));   // its chip went: back to the tiles
+    }
+
+    /** One drawing of the row at {@code scale}; returns the chip to focus again, if any. */
+    private View buildWidgets(List<Widgets.Chip> chips, float scale, String focusedKey) {
+        widgetStrip.removeAllViews();
+        float d = density * scale;
+        Typeface medium = getResources().getFont(R.font.outfit_medium);
+        Typeface regular = getResources().getFont(R.font.outfit_regular);
+        View refocus = null;
+        for (int i = 0; i < chips.size(); i++) {
+            Widgets.Chip chip = chips.get(i);
+            LinearLayout v = new LinearLayout(this);
+            v.setOrientation(LinearLayout.HORIZONTAL);
+            v.setGravity(Gravity.CENTER_VERTICAL);
+            v.setBackgroundResource(R.drawable.widget_chip_bg);
+            boolean iconOnly = chip.value.isEmpty() && chip.icon != null;
+            v.setPadding(Math.round(16 * d), 0, Math.round((iconOnly ? 16 : 22) * d), 0);
+            v.setTag(chip.key);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, Math.round(60 * d));
+            if (i > 0) lp.leftMargin = Math.round(12 * d);
+            if (chip.icon != null) {
+                ImageView icon = new ImageView(this);
+                icon.setImageBitmap(chip.icon);
+                // On the white focused chip a pale icon (a moon, a cloud) would vanish: draw it dark there.
+                icon.setDuplicateParentStateEnabled(true);
+                icon.setImageTintList(new android.content.res.ColorStateList(
+                        new int[][] {{android.R.attr.state_focused}, {}}, new int[] {0xFF111111, 0x00000000}));
+                icon.setImageTintMode(android.graphics.PorterDuff.Mode.SRC_ATOP);
+                LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(Math.round(28 * d), Math.round(28 * d));
+                if (!iconOnly) ilp.rightMargin = Math.round(12 * d);
+                v.addView(icon, ilp);
+            }
+            if (!iconOnly) {
+                LinearLayout texts = new LinearLayout(this);
+                texts.setOrientation(LinearLayout.VERTICAL);
+                texts.setDuplicateParentStateEnabled(true);
+                String[] labels = chip.label.split("\t", -1), values = chip.value.split("\t", -1);
+                if (labels.length > 1 && labels.length == values.length) {
+                    // Tab-separated label and value (TV Panel's tank chip): one column per reading, each label
+                    // left-aligned over its value, all in the one focusable chip.
+                    for (int c = 0; c < labels.length; c++) {
+                        LinearLayout col = new LinearLayout(this);
+                        col.setOrientation(LinearLayout.VERTICAL);
+                        col.setDuplicateParentStateEnabled(true);
+                        col.addView(chipText(labels[c], 13 * scale, regular, R.color.widget_chip_label));
+                        col.addView(chipText(values[c], 19 * scale, medium, R.color.widget_chip_value));
+                        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                        if (c > 0) clp.leftMargin = Math.round(22 * d);
+                        texts.setOrientation(LinearLayout.HORIZONTAL);
+                        texts.addView(col, clp);
+                    }
+                } else {
+                    texts.addView(chipText(chip.label, 13 * scale, regular, R.color.widget_chip_label));
+                    texts.addView(chipText(chip.value, 19 * scale, medium, R.color.widget_chip_value));
+                }
+                v.addView(texts);
+            }
+            // Every chip takes focus so Left/Right walk the row; OK does something only on a chip with a page.
+            v.setFocusable(true);
+            v.setClickable(true);
+            v.setNextFocusDownId(R.id.grid);
+            v.setContentDescription((chip.label + " " + chip.value).replace('\t', ' ').trim());
+            Intent open = widgets.open(chip);
+            if (open != null) {
+                v.setOnClickListener(x -> {
+                    try {
+                        startActivity(open);
+                    } catch (RuntimeException e) {
+                        // The app was removed since the last read: the next read drops the chip.
+                    }
+                });
+            }
+            if (chip.key.equals(focusedKey)) refocus = v;
+            widgetStrip.addView(v, lp);
+        }
+        return refocus;
+    }
+
+    private TextView chipText(String text, float sp, Typeface face, int colours) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        t.setTypeface(face);
+        t.setTextColor(getColorStateList(colours));
+        t.setSingleLine(true);
+        t.setDuplicateParentStateEnabled(true);
+        t.setIncludeFontPadding(false);
+        return t;
     }
 
     // ---- navigation ------------------------------------------------------------------------------
